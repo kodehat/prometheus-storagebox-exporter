@@ -3,8 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -56,6 +57,8 @@ type Storagebox struct {
 var (
 	hetznerUsername string
 	hetznerPassword string
+	host            string
+	port            string
 	boxes           []Storagebox
 	labels          = []string{"id", "name", "product", "server"}
 	diskQuota       = prometheus.NewGaugeVec(
@@ -95,6 +98,10 @@ var (
 func updateBoxes() {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", "https://robot-ws.your-server.de/storagebox", nil)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 	req.SetBasicAuth(hetznerUsername, hetznerPassword)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -102,7 +109,11 @@ func updateBoxes() {
 		return
 	}
 
-	bodyText, err := ioutil.ReadAll(resp.Body)
+	bodyText, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
 
 	if resp.StatusCode != 200 {
 		var apiErr APIError
@@ -122,13 +133,21 @@ func updateBoxes() {
 
 	for _, entry := range apiResponse {
 		req, err := http.NewRequest("GET", fmt.Sprintf("https://robot-ws.your-server.de/storagebox/%d", entry.Box.ID), nil)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 		req.SetBasicAuth(hetznerUsername, hetznerPassword)
 		resp, err = client.Do(req)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		bodyText, err := ioutil.ReadAll(resp.Body)
+		bodyText, err := io.ReadAll(resp.Body)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 		if resp.StatusCode != 200 {
 			var apiErr APIError
 			err = json.Unmarshal(bodyText, &apiErr)
@@ -188,16 +207,20 @@ func updateMetrics() {
 	}
 }
 
-const (
-	listenAddr = ":9509"
-)
-
 func main() {
 	hetznerUsername = os.Getenv("HETZNER_USER")
 	hetznerPassword = os.Getenv("HETZNER_PASS")
-
+	host = os.Getenv("HOST")
+	port = os.Getenv("PORT")
 	if hetznerUsername == "" || hetznerPassword == "" {
 		log.Fatal("Please provide HETZNER_USER and HETZNER_PASS as environment variables")
+	}
+	if host == "" {
+		log.Println("No host provided, using default (bind to all interfaces)")
+	}
+	if port == "" {
+		log.Println("No port provided, using default (9509)")
+		port = "9509"
 	}
 
 	prometheus.MustRegister(diskQuota)
@@ -207,6 +230,7 @@ func main() {
 
 	go updateMetrics()
 
+	listenAddr := net.JoinHostPort(host, port)
 	fmt.Printf("Listening on %q", listenAddr)
 	http.Handle("/metrics", promhttp.Handler())
 	http.ListenAndServe(listenAddr, nil)

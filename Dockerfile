@@ -1,15 +1,34 @@
-FROM golang:1.22 AS builder
-WORKDIR /go/src/prometheus-storagebox-exporter
-COPY . /go/src/prometheus-storagebox-exporter
-RUN CGO_ENABLED=0 GOOS=linux go build
+FROM golang:1.24.2-alpine3.21 AS builder
 
-FROM alpine:latest
-LABEL org.opencontainers.image.title=prometheus-storagebox-exporter
-LABEL org.opencontainers.image.description="Prometheus Exporter for Hetzner's Storagebox Service"
-LABEL org.opencontainers.image.authors="Felix Breidenstein <mail@felixbreidenstein.de>"
-LABEL org.opencontainers.image.url=https://github.com/fleaz/prometheus-storagebox-exporter
-LABEL org.opencontainers.image.licenses=MIT
+WORKDIR /app
 
-RUN apk --no-cache add ca-certificates
-COPY --from=builder /go/src/prometheus-storagebox-exporter/prometheus-storagebox-exporter /
-CMD ["./prometheus-storagebox-exporter"]
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY *.go ./
+
+RUN CGO_ENABLED=0 go build
+
+FROM alpine:3.21.3
+
+LABEL org.opencontainers.image.authors='dev@codehat.de' \
+      org.opencontainers.image.url='https://github.com/kodehat/prometheus-storagebox-exporter' \
+      org.opencontainers.image.documentation='https://github.com/kodehat/prometheus-storagebox-exporter' \
+      org.opencontainers.image.source='https://github.com/kodehat/prometheus-storagebox-exporter' \
+      org.opencontainers.image.vendor='kodehat' \
+      org.opencontainers.image.licenses='MIT'
+
+WORKDIR /opt
+
+# "curl" is added only for Docker healthchecks!
+RUN apk --no-cache add ca-certificates tzdata curl && \
+    update-ca-certificates && \
+    adduser -D -H nonroot
+
+COPY --from=builder --chown=nonroot:nonroot --chmod=550 /app/prometheus-storagebox-exporter ./prometheus-storagebox-exporter
+
+EXPOSE 9509/tcp
+
+USER nonroot:nonroot
+
+ENTRYPOINT [ "/opt/prometheus-storagebox-exporter" ]
